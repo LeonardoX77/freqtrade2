@@ -33,4 +33,31 @@ services:
       --logfile /freqtrade/user_data/logs/freqtrade.log
       --db-url sqlite:////freqtrade/user_data/tradesv3.sqlite
       --config /freqtrade/user_data/config.json
-      --strategy SampleStrategy
+      --strategy RsiMacdStrategy
+  # freqtrade-exporter:
+  #   image: thraizz/freqtrade-exporter:latest
+  #   container_name: freqtrade-exporter
+  #   environment:
+  #     - FREQTRADE_API=http://freqtrade:8080
+  #   depends_on:
+  #     - freqtrade
+  #   ports:
+  #     - "127.0.0.1:8000:8000"
+  # prometheus:
+  #   image: prom/prometheus:latest
+  #   container_name: prometheus
+  #   volumes:
+  #     - ./prometheus.yml:/etc/prometheus/prometheus.yml
+  #   command:
+  #     - '--config.file=/etc/prometheus/prometheus.yml'
+  #   ports:
+  #     - "127.0.0.1:9090:9090"
+  #   depends_on:
+  #     - freqtrade-exporter
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   container_name: grafana
+  #   ports:
+  #     - "127.0.0.1:3001:3000"
+  #   depends_on:
+  #     - prometheus
