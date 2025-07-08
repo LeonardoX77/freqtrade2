@@ -225,3 +225,17 @@ To run this bot we recommend you a cloud instance with a minimum of:
 - [TA-Lib](https://ta-lib.github.io/ta-lib-python/)
 - [virtualenv](https://virtualenv.pypa.io/en/stable/installation.html) (Recommended)
 - [Docker](https://www.docker.com/products/docker) (Recommended)
+
+## Testing
+
+To verify the code quality and run unit tests, execute:
+
+```bash
+ruff check .
+mypy freqtrade
+pytest -q
+```
+
+`mypy` and `pytest` may require additional dependencies such as `sqlalchemy` and `numpy`.
+If these are not installed, the commands will report errors. Consult the
+project documentation for setup instructions.
