@@ -4,50 +4,47 @@ docker-compose exec freqtrade freqtrade trade --strategy RsiMacdStrategy --dry-r
 
 ---
 
-## 1. Validación, métrica y gestión de datos históricos
+## 1. Validación, Métricas y Gestión de Datos Históricos
 
-**1.1 Backtesting multinivel**
+**1.1 Backtesting Multi-Nivel**
 
-- Ejecutar sobre **1 m, 5 m, 1 h** y usar **filtro macro** diario/semanal (p. ej. EMA200₁d o MACD₁w) para comparar señales intradía con la tendencia de fondo.
-- Incluir indicadores de **volumen** (volumen medio 20, OBV, VWAP) en métricas de robustez.
+- Ejecutar en **1m, 5m, 1h** y aplicar un **filtro macro** (diario/semanal, por ejemplo, EMA200₁d o MACD₁w) para comparar señales intradía contra la tendencia general.
+- Incluir **indicadores de volumen** (media móvil de volumen 20, OBV, VWAP) y **EMA200** en las métricas de robustez. Estos indicadores ayudan a filtrar señales falsas y a operar a favor de la tendencia principal.
 
-**1.2 Indicadores clave y métricas**
+**1.2 Indicadores y Métricas Clave**
 
-- Profit factor, drawdown máximo, Sharpe ratio, win rate y holding times.
-- Analizar divergencias de OBV y confirmaciones de VWAP.
+- Profit factor, drawdown máximo, ratio de Sharpe, win rate y tiempos de permanencia.
+- Analizar divergencias de OBV, confirmaciones de VWAP y relación precio/EMA200.
 
-**1.3 Base de datos de series temporales**
+**1.3 Base de Datos de Series Temporales**
 
-- Usar **TimescaleDB** o **QuestDB** para almacenar 6 meses de velas (1 m–1 d), con pre-cómputo de vol\_ma20, OBV, VWAP mediante continuous aggregates o vistas materializadas.
-
-- **Pipeline de ingestión**: al arrancar el bot o cada noche, **comprobar** la base de datos para determinar la última fecha/vela almacenada, **ajustar** el rango de datos a descargar (solo velas faltantes hasta cierre de ayer) mediante API + **UPSERT**; mantener job de limpieza periódica (`DELETE` < now()–interval '6 months').
-
-- Usar **TimescaleDB** o **QuestDB** para almacenar 6 meses de velas (1 m–1 d), con pre-cómputo de vol\_ma20, OBV, VWAP mediante continuous aggregates o vistas materializadas.
-
-- Pipeline de ingestión: bulk‐insert histórico + UPSERT de nuevas velas, limpieza periódica (`DELETE` < now()–6 meses).
+- Usar **TimescaleDB** o **QuestDB** para almacenar 6 meses de velas (1m–1d), con `vol_ma20`, `OBV`, `VWAP`, y **EMA200** precomputados mediante agregados continuos o vistas materializadas.
+- **Pipeline de ingesta**: al iniciar o cada noche, comprobar el último timestamp almacenado, ajustar el rango de descarga para obtener solo las velas faltantes hasta el cierre de ayer vía API + **UPSERT**; programar limpieza (`DELETE` < now() – INTERVAL '6 months').
 
 ---
 
-## 2. Función unificada de detección de tendencia (Multi-timeframe + Volumen)
+## 2. Función Unificada de Detección de Tendencia (Multi-Timeframe + Volumen + EMA200)
 
 ```python
 def get_trend(df: DataFrame) -> Literal["up","down","sideways"]:
-    # 1. Macro-trend: EMA200₁d vs close diario
+    # 1. Macro tendencia: EMA200 diaria vs. cierre diario
     macro_up = df['ema200_1d'].iloc[-1] < df['close_1d'].iloc[-1]
 
-    # 2. HMA(14) vs EMA200 intradía
+    # 2. Intradía: HMA(14) vs. MA200
     trend_hma = df['hma'].iloc[-1] > df['close'].rolling(200).mean().iloc[-1]
 
-    # 3. MACD intradía
+    # 3. Intradía: MACD
     trend_macd = df['macd'].iloc[-1] > df['macdsignal'].iloc[-1]
 
-    # 4. RSI multiframe
-    rsi_ok = df['rsi_1h'].iloc[-1] > 50 and df['rsi_1d'].iloc[-1] > 50
+    # 4. Multi-timeframe RSI
+    rsi_ok = (df['rsi_1h'].iloc[-1] > 50) and (df['rsi_1d'].iloc[-1] > 50)
 
-    # 5. Confirmación de volumen
+    # 5. Confirmación por volumen
     vol_ok = df['volume'].iloc[-1] > df['vol_ma20'].iloc[-1] * 1.2
+    vwap_ok = df['close'].iloc[-1] > df['vwap'].iloc[-1]
+    obv_ok = df['obv'].iloc[-1] > df['obv'].rolling(20).mean().iloc[-1]
 
-    if macro_up and trend_hma and trend_macd and rsi_ok and vol_ok:
+    if macro_up and trend_hma and trend_macd and rsi_ok and vol_ok and vwap_ok and obv_ok:
         return "up"
     if not (macro_up or trend_hma or trend_macd) and df['rsi'].iloc[-1] < 50:
         return "down"
@@ -273,3 +270,34 @@ Para ventanas de tiempo más grandes (diario, semanal, mensual) donde la latenci
 
 > Con este plan, integrarás volumen, gestión de datos eficiente y un filtro macro-micro en todos los niveles, junto con sizing adaptativo y uso de stablecoins, logrando un bot Freqtrade verdaderamente robusto y adaptable.
 
+---
+
+## 12. Arquitectura modular y función principal de tendencia
+
+Para garantizar flexibilidad y mantenibilidad, la arquitectura debe organizarse en módulos independientes, con un **módulo principal** encargado de la detección de tendencia y la orquestación de la lógica de trading:
+
+### Estructura recomendada:
+
+- **Módulo 1: Ingesta y almacenamiento de datos**
+  - Encargado de recolectar, limpiar y almacenar velas e indicadores en la base de datos/cache.
+- **Módulo 2: Cálculo de indicadores**
+  - Calcula y actualiza los indicadores técnicos (incluyendo EMA200, HMA, MACD, RSI, volumen, OBV, VWAP) y los deja listos para consumo.
+- **Módulo 3: Detección de tendencia (core)**
+  - Implementa la función principal `get_trend(df)` que, usando los indicadores calculados, determina el estado del mercado: `"up"`, `"down"` o `"sideways"`.
+  - Este módulo es el punto de entrada para la lógica de selección de estrategia y gestión de capital.
+- **Módulo 4: Estrategias y ejecución**
+  - Define las reglas de entrada/salida y ejecuta las órdenes según el estado de tendencia y los parámetros de riesgo.
+- **Módulo 5: Monitorización y control**
+  - Gestiona alertas, dashboards, CLI y bots de control.
+
+### Sobre la función `get_trend` y la estrategia actual
+
+La lógica de la estrategia `RsiMacdStrategy` (con los indicadores propuestos: EMA200, HMA, MACD, RSI, volumen, OBV, VWAP) es suficiente para implementar la función `get_trend` y distinguir entre `"up"`, `"down"` y `"sideways"`, siempre que se incluyan los indicadores de volumen y EMA200 en el cálculo.
+
+No es necesario implementar una estrategia adicional para la detección de tendencia, pero sí es fundamental que la función `get_trend`:
+- Consuma los indicadores desde el módulo de datos/cache.
+- Aplique las condiciones multi-nivel y de confirmación descritas (macro, intradía, volumen).
+- Permita ser llamada desde el módulo principal para decidir la lógica de trading y gestión de capital.
+
+**Resumen:**  
+La arquitectura modular debe tener un módulo principal donde se defina y ejecute `get_trend`. Si la estrategia implementa todos los indicadores clave (EMA200, volumen, etc.), es suficiente para calcular las tendencias. Si falta algún indicador, debe añadirse en el módulo de cálculo de indicadores.
