@@ -1,3 +1,12 @@
+# Estrategia diseñada para aprovechar tendencias alcistas en altcoins durante ciclos de expansión cripto (bull runs).
+# Utiliza cruces de medias móviles y RSI para confirmar entradas, con trailing stop para capturar ganancias extendidas.
+# Añade un filtro dinámico basado en volumen para operar únicamente cuando hay liquidez significativa.
+
+import ccxt
+import pandas as pd
+from datetime import datetime, timedelta
+
+
 from freqtrade.strategy import IStrategy
 from pandas import DataFrame
 import talib.abstract as ta
@@ -43,3 +52,53 @@ class AltSeasonRotationStrategy(IStrategy):
             (dataframe['close'] < dataframe['ema20']),              # Ruptura bajista de soporte dinámico
             'sell'] = 1
         return dataframe
+
+
+    # --- CATEGORÍAS MANUALES DE TOKENS ---
+    CATEGORIAS = {
+        'layer1': ['SOL/USDT', 'AVAX/USDT', 'ADA/USDT'],
+        'defi': ['UNI/USDT', 'AAVE/USDT', 'COMP/USDT'],
+        'ai': ['FET/USDT', 'AGIX/USDT', 'OCEAN/USDT']
+    }
+
+
+# Script para rotar grupos de pares según rendimiento semanal
+# Este script evalúa rendimiento semanal y selecciona sectores calientes
+
+    # --- PARÁMETROS ---
+    THRESHOLD_TOP = 0.15   # % mínimo semanal para activar grupo
+    EXCHANGE = ccxt.binance()
+
+    # --- OBTIENE RENDIMIENTO SEMANAL DE UN PAR ---
+    def get_weekly_performance(symbol):
+        try:
+            ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe='1d', limit=7)
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            perf = (df['close'].iloc[-1] - df['close'].iloc[0]) / df['close'].iloc[0]
+            return perf
+        except:
+            return None
+
+    # --- FILTRA CATEGORÍAS ACTIVAS ---
+    def detectar_grupos_activos():
+        activos = {}
+        for sector, pares in CATEGORIAS.items():
+            rendimientos = [get_weekly_performance(par) for par in pares]
+            rendimientos = [r for r in rendimientos if r is not None]
+            if rendimientos:
+                promedio = sum(rendimientos) / len(rendimientos)
+                if promedio > THRESHOLD_TOP:
+                    activos[sector] = promedio
+        return activos
+
+    # --- EJECUCIÓN ---
+    if __name__ == '__main__':
+        activos = detectar_grupos_activos()
+        if activos:
+            print("Grupos calientes:")
+            for sector, score in activos.items():
+                print(f" - {sector.upper()}: {score*100:.2f}%")
+        else:
+            print("Ningún grupo supera el umbral.")
+
+
